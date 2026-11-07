@@ -131,6 +131,9 @@ def komut_uygula(a):
         n_alarm = int((sirali["sigma_skoru"].abs() > 3).sum())
         print(f"\n[SURPRISE-TARAMA] {len(sirali)} hisse tarandı, "
               f"{n_alarm} tanesi ±3σ eşiğini aştı.")
+        print("   okuma: sigma = modelin 'bu bar beklediğimden farklı' düzeyi")
+        print("          (σ biriminde, kayan medyan/MAD'a göre); |sigma|>3 = OLAĞANDIŞI;")
+        print("          skor = 0-1 arası normalize olağandışılık")
         print("En olağandışı 20 (|sigma| sıralı):")
         for _, r in sirali.head(20).iterrows():
             isaret = "!" if abs(r["sigma_skoru"]) > 3 else " "
@@ -153,6 +156,12 @@ def komut_uygula(a):
             pozitif = int((sen_tablo["medyan_senaryo_getiri_%"] > 0).sum())
             print(f"   {len(sen_tablo)} hisse ölçüldü | medyan senaryo getirisi > 0: "
                   f"{pozitif} | atlanan: {len(atlanan)}")
+            print("   okuma: her hissenin son 64 barı, geçmiş ~300k pencerede en")
+            print("          benzer 25 pencereyle eşlenir; medyan/p10/p90 = o 25")
+            print("          pencerenin SONRAKİ 8 barlık gerçek getiri dağılımı;")
+            print("          yükselen % = kârlı kapanan komşu oranı. p10 sığ + band")
+            print("          dar + yükselen yüksek = modelin en net olumlu görüşü.")
+            print("          Benzerlik ≠ gelecek garantisi; keşif aracıdır.")
             print("En olumlu 20 (medyan senaryo getirisi sıralı):")
             for _, r in sen_tablo.head(20).iterrows():
                 print(f"   {r['hisse']:<12} medyan={r['medyan_senaryo_getiri_%']:+7.2f}%  "

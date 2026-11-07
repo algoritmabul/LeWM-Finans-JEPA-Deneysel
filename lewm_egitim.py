@@ -9,6 +9,7 @@ EMA yok, stop-gradient yok: encoder + predictor uçtan uca eğitilir.
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -181,7 +182,7 @@ def egit(cfg: EgitimYapilandirma, sustur: bool = False):
 
     if not sustur and yuklendi:
         if baslangic_ep > 0:
-            print(f"[DEVAM] checkpoint yüklendi — {baslangic_ep} epoch tamamlanmış, "
+            print(f"[DEVAM] {yuklenecek.name} yüklendi — {baslangic_ep} epoch tamamlanmış, "
                   f"{baslangic_ep + 1}. epoch'tan devam.")
         else:
             print("[DEVAM] checkpoint'ten ağırlıklar yüklendi; "
@@ -250,11 +251,12 @@ def egit(cfg: EgitimYapilandirma, sustur: bool = False):
             _kaydet(model, cfg, cikti, en_iyi=True, opt=opt, scaler=scaler,
                     adim=adim, epoch=ep, en_iyi_dogrulama=en_iyi_dogrulama,
                     gecmis=gecmis, toplam_adim=toplam_adim)
-    # son modeli de sakla
-    _kaydet(model, cfg, cikti, en_iyi=False, opt=opt, scaler=scaler,
-            adim=adim, epoch=gecmis["epoch"][-1] if gecmis["epoch"] else baslangic_ep,
-            en_iyi_dogrulama=en_iyi_dogrulama, gecmis=gecmis,
-            toplam_adim=toplam_adim)
+        # son modeli HER epoch sonunda yaz — kesintiye uğrayan koşu bir sonraki
+        # --devam'da son tamamlanan epoch'tan sürer (yama: eski sürümde yalnız
+        # koşu bitince yazılıyordu; ara verilen koşu 12. epoch'a geri düşüyordu)
+        _kaydet(model, cfg, cikti, en_iyi=False, opt=opt, scaler=scaler,
+                adim=adim, epoch=ep, en_iyi_dogrulama=en_iyi_dogrulama,
+                gecmis=gecmis, toplam_adim=toplam_adim)
 
     if not sustur:
         print(f"[TAMAM] en iyi doğrulama MSE: {en_iyi_dogrulama:.5f} | "
@@ -282,7 +284,12 @@ def _kaydet(model: LeWMDunyaModeli, cfg: EgitimYapilandirma,
         paket["opt_durum"] = opt.state_dict()
     if scaler is not None:
         paket["scaler_durum"] = scaler.state_dict()
-    torch.save(paket, cikti / ad)
+    # atomik yazım: önce geçici dosyaya, sonra tek işlemde adlandır —
+    # yarım kalan torch.save dosyası --devam'ı bozmasın
+    hedef = cikti / ad
+    gecici = cikti / (ad + ".gecici")
+    torch.save(paket, gecici)
+    os.replace(gecici, hedef)
 
 
 if __name__ == "__main__":  # pragma: no cover

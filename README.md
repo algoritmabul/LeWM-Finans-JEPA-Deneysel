@@ -1,172 +1,340 @@
-<div align="center">
+# LeWM-Finans — LeWorldModel (JEPA) ile Hisse Senedi Analizi
 
-# 🧠 LeWM-Finans · JEPA Financial World Model
+`arXiv:2603.19312` numaralı **"LeWorldModel: Stable End-to-End Joint-Embedding
+Predictive Architecture from Pixels"** (Maes, Le Lidec, Scieur, LeCun,
+Balestriero) makalesindeki yöntemi, MetaStock CSV verilerinize (günlük / 60dk /
+240dk / haftalık / aylık OHLCV) uygulayan Python paketi.
 
-**BIST için fiyat barlarından öğrenen dünya modeli — latent piyasa analizi, anomali radarı ve tarihsel senaryo araştırması.**
+Pikseller yerine **fiyat barları** kodlanır; amaç aynıdır: piyasa dinamiklerini
+kompakt bir latent (gizli) uzayda öğrenen, uçtan uca kararlı eğitilen bir dünya
+modeli kurmak.
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white) ![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-EE4C2C?logo=pytorch&logoColor=white) ![JEPA](https://img.shields.io/badge/Architecture-JEPA-7353BA) ![Market](https://img.shields.io/badge/Market-BIST-1B998B) ![Data](https://img.shields.io/badge/Data-Local%20OHLCV-555)
+---
 
-**[📖 Genel Bakış](#-genel-bakış) · [✨ Özellikler](#-özellikler) · [🚀 Kurulum](#-kurulum) · [🎮 Kullanım](#-kullanım) · [📊 Çıktılar](#-çıktılar) · [🧪 Doğrulama](#-doğrulama) · [📚 Referanslar](#-referanslar)**
+## 1. Makaledeki yöntem → bu paket
 
-</div>
+| LeWorldModel (orijinal)               | LeWM-Finans (bu paket)                          |
+|---------------------------------------|-------------------------------------------------|
+| Ham piksel karesi (video karesi)      | Bar penceresi (örn. 64 günlük bar × 6 özellik)  |
+| ViT patch'i                           | `--patch` bar'lık dilim + lineer projeksiyon    |
+| Encoder (Transformer)                 | Aynı — pre-LN Transformer, ortalama havuzlama   |
+| Predictor (gelecek karenin gömmesi)   | Gelecek `--tgt` barın latent gömmesini tahmin   |
+| Kayıp = tahmin MSE + **SIGReg**       | Aynı iki terim, EMA/stop-gradient **yok**       |
+| Sürpriz = latent tahmin hatası        | Piyasa anomalisi tespiti (σ skoru)              |
+| ~15M param, tek GPU                   | Varsayılan ~5M–15M param, tek GPU               |
 
-## 📖 Genel Bakış
+**SIGReg nedir?** (LeJEPA, arXiv:2511.08544 — Algoritma 1 bu pakette birebir
+uygulanmıştır: `lewm_sigreg.py`) Gömmeler her adımda taze rastgele doğrultulara
+projelenir ve her doğrultuda **Epps-Pulley istatistiği** (ampirik karakteristik
+fonksiyon ile normal dağılım CF'i arasındaki ağırlıklı L2 uzaklık) hesaplanır.
+Gömme bulutu izotropik Gauss'a çekildikçe "her şeyi aynı vektöre yığan" çökmüş
+çözümler cezalanır; EMA veya stop-gradient gereksinimi ortadan kalkar.
 
-**LeWM-Finans**, [LeWorldModel](https://arxiv.org/abs/2603.19312) çalışmasındaki Joint-Embedding Predictive Architecture (JEPA) yaklaşımını yerel **MetaStock CSV / OHLCV** finansal zaman serilerine uyarlayan Python araştırma paketidir.
+**Özellik seti (bar başına 6):** log getiri, gövde log(C/O), aralık log(H/L),
+kapanış konumu (C−L)/(H−L), gap log(O/Cönce), log hacim. Pencereler bağlamın
+**robut (medyan/MAD)** istatistikleriyle normalize edilir — tek bir ani zıplama
+anomaliyi seyreltemez ve geleceğe bilgi sızıntısı olmaz.
 
-Video kareleri yerine **fiyat barları** kodlanır. Transformer encoder, piyasa geçmişini kompakt bir latent temsile dönüştürür; predictor gelecekteki pencerenin latent temsilini tahmin etmeye çalışır. **SIGReg**, gömmelerin tek noktaya çökmesini önlemeyi amaçlar.
+---
 
-```text
-📁 LOCAL OHLCV CSV
-       ↓
-🧮 6 BAR FEATURES + ROBUST NORMALIZATION
-       ↓
-🧩 PATCH EMBEDDING → TRANSFORMER ENCODER
-       ↓
-🧠 JEPA PREDICTOR + SIGReg
-       ↓
-🌐 LATENT MARKET SPACE
-       ├── 🚨 Surprise / Anomaly Detection
-       ├── 🧭 Market Crash Radar
-       ├── 🔎 k-NN Scenario Discovery
-       ├── 📋 AL Candidate Screening
-       └── 🧪 Hindsight / Probe Validation
+## 2. Dosyalar
+
+```
+veri_periyot.py    Sizin mevcut veri okuyucunuz (değişiklik yapılır mı? HAYIR)
+lewm_sigreg.py     SIGReg kaybı (Epps-Pulley + rastgele projeksiyon)
+lewm_model.py      Encoder + Predictor (Transformer)
+lewm_veri.py       VeriPeriyot tabanlı pencere veri seti
+lewm_egitim.py     GPU/AMP destekli eğitim döngüsü
+lewm_uygula.py     Sürpriz skoru, embedding, latent k-NN gelecek tahmini, probe
+lewm_geriye_donuk.py  Hindsight what-if testi (son tarih kırpılmış veriyle)
+lewm_piyasa_radari.py Piyasa çöküş radarı (kesitsel sigma + fiyat, GZ görünüm)
+lewm_al_listesi.py    "AL" durumdaki hisseler (sızıntısız koşul + doğrulama)
+lewm_harman.py        Kural/model harmanı laboratuvarı (10 varyantın 250-bar kıyası)
+lewm_rapor.py      Grafikler ve CSV raporlar
+lewm_cli.py        KOMUT SATIRI GİRİŞİ (bunu çalıştırırsınız)
+requirements.txt   Gerekli paketler
 ```
 
-> [!IMPORTANT]
-> Bu sistem **kesin fiyat tahmini** üretmez. Latent benzerlik, anomali ve kural tabanlı tarama çıktıları araştırma amaçlıdır. Geleceği bilen bir model olarak yorumlanmamalıdır.
+Tüm `lewm_*` dosyaları `veri_periyot.py` ile **aynı klasöre** konur
+(örn. `D:\new\yeniden\`).
 
-## ✨ Özellikler
+---
 
-### 🧠 JEPA Dünya Modeli
+## 3. Kurulum
 
-- Transformer encoder + latent predictor mimarisi
-- Gelecek `--tgt` barın gömmesini tahmin etme
-- **SIGReg** (rastgele projeksiyon + Epps–Pulley istatistiği)
-- EMA ve stop-gradient gerektirmeyen eğitim yaklaşımı
-- Tek GPU, AMP desteği, checkpoint ile eğitime devam
-
-### 📈 OHLCV Özellik Mühendisliği
-
-Bar başına **6 özellik**: log getiri, `log(C/O)`, `log(H/L)`, kapanış konumu `(C−L)/(H−L)`, önceki kapanışa göre gap `log(O/Cönce)` ve log hacim. Normalizasyon, bağlam penceresinin **medyan/MAD** istatistiklerine dayanır.
-
-Desteklenen periyotlar: `gunluk`, `60dk`, `240dk`, `haftalik`, `aylik`.
-
-### 🚨 Anomali ve Piyasa Radarı
-
-- Latent tahmin hatasından **robust sigma (σ)** skoru
-- Kayan 252 bar medyan/MAD kalibrasyonu
-- `|σ| > 3` gibi anomali işaretleri
-- Piyasadaki yüksek-σ hisse oranı ve 5-bar medyan getiri ile rejim radarı
-- **GZ (gerçek zamanlı)** görünüm: skorun gerçekten bilinebildiği tarihe kaydırılması
-- Çöküş yakalama ve yanlış alarm değerlendirmesi
-
-### 🔎 Latent k-NN Senaryo Analizi
-
-- Tahmin edilen latent hedefe benzeyen **25 tarihsel hedef pencere**
-- Tarihsel komşuların gerçekleşmiş getirilerinden medyan, p10–p90 ve yükselen oranı
-- Tüm hisselerde ortak referans havuzuyla senaryo taraması
-- PCA 2B embedding haritası
-
-### 📋 AL Aday Listesi
-
-- **K1:** GZ sigma risk filtresi
-- **K2–K6:** MA20/MA50 trendi, göreli güç, 5-bar getiri ve hacim teyitleri
-- **6 puan:** GÜÇLÜ AL · **5 puan:** AL · **4 puan:** İZLE
-- Piyasa ALARM durumunda isteğe bağlı listeyi durdurma
-- Tarihsel doğrulama ve tarih kırpmalı hindsight değerlendirmesi
-
-> [!CAUTION]
-> **AL** etiketleri yazılımın kural tabanlı sınıflandırmasıdır; emir, yatırım tavsiyesi veya doğrulanmış getiri garantisi değildir.
-
-### 🧪 Kontrol Deneyleri
-
-- Dondurulmuş embedding ile **8-bar yön probe** (lojistik regresyon)
-- Aynı probe ile **ham fiyat/hacim istatistikleri baseline** karşılaştırması
-- Zamansal doğrulama ve geçmişe dönük senaryo değerlendirmesi
-- Girdi sızıntısı ile **checkpoint/ağırlık sızıntısı** ayrımının açık raporlanması
-
-## 🚀 Kurulum
-
-### 1. Bağımlılıkları yükleyin
-
-```powershell
+```bat
 pip install -r requirements.txt
 ```
 
-NVIDIA GPU için PyTorch'un CUDA sürümünü [resmî kurulum sayfasından](https://pytorch.org/get-started/locally/) sisteminize uygun olarak seçin. CPU ile de çalışır; eğitim daha yavaştır.
+PyTorch GPU sürümü için (NVIDIA kartınız varsa):
 
-### 2. Proje yapısı
-
-```text
-LeWM-Finans/
-├── veri_periyot.py          # Mevcut yerel CSV okuyucu (değiştirilmez)
-├── lewm_sigreg.py           # SIGReg / Epps–Pulley
-├── lewm_model.py            # Transformer encoder + predictor
-├── lewm_veri.py             # OHLCV pencere veri seti
-├── lewm_egitim.py           # Eğitim / GPU / AMP / checkpoint
-├── lewm_uygula.py           # Sigma, embedding, k-NN, probe
-├── lewm_geriye_donuk.py     # Tarih kırpmalı hindsight testi
-├── lewm_piyasa_radari.py    # Kesitsel piyasa rejimi radarı
-├── lewm_al_listesi.py       # AL aday taraması / doğrulama
-├── lewm_rapor.py            # Grafik ve CSV raporları
-├── lewm_cli.py              # Ana komut satırı girişi
-├── requirements.txt
-└── demo_ciktilar/           # Sentetik veri örnekleri
+```bat
+pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 
-Tüm `lewm_*` dosyaları `veri_periyot.py` ile **aynı klasörde** bulunmalıdır. Varsayılan CSV dizinleri `veri_periyot.py` içinden okunur; istenirse komut satırından değiştirilir.
+CPU sürümü de çalışır (daha yavaş).
 
-## 🎮 Kullanım
+---
 
-### 🎓 Model eğitimi
+## 4. Hızlı Başlangıç
 
-```powershell
-# Günlük veri, tüm hisseler
+`veri_periyot.py`'nın yanındaki klasörde komut istemini açın:
+
+```bat
+:: 1) EĞİTİM — günlük veri, klasördeki TÜM hisseler
 python lewm_cli.py egit --periyot gunluk --epoch 30
 
-# Belirli hisseler
-python lewm_cli.py egit --hisseler THYAO,ASELS,GARAN --epoch 30
-```
-
-### 🔍 Analiz ve embedding haritası
-
-```powershell
+:: 2) UYGULAMA — sürpriz skoru + embedding + gelecek tahmini
 python lewm_cli.py uygula --hisse THYAO --harita --probe
 
-# Eğitim ve uygulama birlikte
+:: İkisi birden:
 python lewm_cli.py hepsi --hisse THYAO
 ```
 
-### ⏯️ Kaldığı yerden eğitim
+Varsayılan dizinler `veri_periyot.py`'nizdeki gibidir
+(`D:\new\yeniden\metastock-gun-csv` ve `...\metastock-60dk-csv`).
 
-```powershell
+### Parçalı eğitim (aşırı ısınma / uzun süreli eğitim için)
+
+Her epoch sonunda checkpoint güncellenir. İstediğiniz an `Ctrl+C` ile
+durdurup bilgisayarı serindestikten sonra kaldığı yerden devam
+ettirebilirsiniz:
+
+```bat
+:: ilk oturum (örn. 3-4 epoch çalışır, sonra Ctrl+C)
+python lewm_cli.py egit --devam --epoch 12 --derinlik 4 --emb 192 --batch 128
+
+:: sonraki oturumlar — AYNI komut; kaldığı epoch'tan devam eder
 python lewm_cli.py egit --devam --epoch 12 --derinlik 4 --emb 192 --batch 128
 ```
 
-Her epoch sonunda checkpoint güncellenir. `Ctrl+C` ile durdurup **aynı komutla** devam edebilirsiniz. `--epoch` ek epoch değil, **toplam hedef epoch** sayısıdır. Model mimarisi değişirse devam işlemi hata verir.
+Notlar:
+- `--epoch` her zaman TOPLAM hedefi gösterir (12 = 12. epoch'ta durur).
+- `--devam` mimari uyuşmazlığını denetler: farklı `--emb/--derinlik/...`
+  ile devam ederseniz net bir hata verir.
 
-### ⏱️ Farklı periyotlar ve veri dizinleri
+### Farklı veri dizini
 
-```powershell
-python lewm_cli.py hepsi --periyot 60dk --ctx 256 --tgt 9 --hisse THYAO
-python lewm_cli.py hepsi --periyot haftalik --ctx 64 --tgt 4 --hisse THYAO
+Her iki sıra da geçerlidir: seçenekler `egit`'ten önce de sonra da yazılabilir.
+
+```bat
 python lewm_cli.py egit --gunluk "D:\farkli\yol\gun-csv" --saatlik "D:\farkli\yol\60dk-csv"
 ```
 
-### 🌐 Piyasa geneli senaryo taraması
+### 60dk / 240dk / haftalık periyotları
 
-```powershell
-python lewm_cli.py uygula --tum --senaryo-tarama --senaryo-ref 500
+```bat
+python lewm_cli.py hepsi --periyot 60dk --ctx 256 --tgt 9 --hisse THYAO
+python lewm_cli.py hepsi --periyot haftalik --ctx 64 --tgt 4 --hisse THYAO
 ```
 
-### 🚨 Piyasa radarı
+Not: intraday (60dk) veride ctx=256 bar ≈ 1 ay, tgt=9 bar ≈ 1 gün eder;
+günlükte ctx=64 bar ≈ 3 ay, tgt=2 bar ≈ 2 gün.
+
+---
+
+## 5. Parametreler
+
+| Parametre    | Varsayılan | Açıklama                                       |
+|--------------|-----------:|------------------------------------------------|
+| `--periyot`  | `gunluk`   | gunluk / 60dk / 240dk / haftalik / aylik       |
+| `--hisseler` | tümü       | Virgüllü: `THYAO,ASELS,GARAN`                  |
+| `--epoch`    | 30         | Epoch sayısı (GPU'da 30–50 önerilir)           |
+| `--batch`    | 256        | Batch boyutu (GPU RAM'e göre 256–1024)         |
+| `--ctx`      | 64         | Bağlam penceresi (bar)                         |
+| `--tgt`      | 8          | Tahmin edilecek ileri pencere (bar)            |
+| `--lam`      | 0.1        | SIGReg ağırlığı — makalenin tek hiperparametresi |
+| `--emb`      | 256        | Latent gömme boyutu (D)                        |
+| `--derinlik` | 6          | Transformer katman sayısı                      |
+| `--kafa`     | 8          | Dikkat kafası sayısı                           |
+| `--patch`    | 4          | Patch uzunluğu (ctx ve tgt'yi tam bölmeli)     |
+| `--lr`       | 3e-4       | Öğrenme oranı (warmup + cosine)                |
+| `--cikti`    | lewm_cikti | Çıktı klasörü                                  |
+
+`--patch` otomatik güvenlik içerir: ctx/tgt'yi tam bölmezse gcd'ye küçültülür.
+
+---
+
+## 6. Çıktılar (`lewm_cikti/` klasörü)
+
+| Dosya                          | İçerik                                                  |
+|--------------------------------|---------------------------------------------------------|
+| `lewm_model_eniyi.pt`          | Doğrulama kaybı en düşük checkpoint (uygulama bunu kullanır) |
+| `lewm_model_son.pt`            | Son epoch modeli                                        |
+| `egitim_eğrileri.png`          | Toplam / tahmin / SIGReg kayıpları + doğrulama          |
+| `surprise_<HISSE>.csv`         | Tarih, kapanış, ham sürpriz, **sigma_skoru**            |
+| `surprise_<HISSE>.png`         | Fiyat + ±3σ anomali bantları grafik                     |
+| `tarama_son_gommeler.csv`      | Her hissenin SON pencere gömmesi + en benzer tarihsel karşılık |
+| `embedding_tumu.csv`           | Son 400 pencere/gömme (harita ve k-NN için)             |
+| `embedding_haritasi.png`       | PCA 2B embedding haritası — benzer hisseler yakın       |
+| `embedding_pca.csv`            | PC1/PC2 koordinatları                                   |
+| `tahmin_<HISSE>.csv`           | Latent k-NN senaryo tablosu (benzerlik + gerçekleşen getiri) |
+| `senaryo_tarama.csv`           | Tüm piyasada k-NN senaryo taraması: hisse başına medyan senaryo getirisi, p10–p90, yükselen oranı (medyana göre azalan sıralı) |
+
+**Sürpriz (σ) nasıl okunur?** `sigma_skoru` = o anki latent tahmin hatasının,
+son 252 günün kayan medyan/MAD'ine göre kaç robust standart sapma uzakta
+olduğu. `|σ| > 3` → modelin bu hareketi "görmediği", olağan dışı piyasa
+davranışı (makaledeki "surprise detects implausible events" karşılığı).
+
+**Gelecek tahmini nasıl okunur?** Predictor son bağlam penceresinden gelecek
+pencerenin gömmesini öngörür; bu tahmin noktasının latent uzaydaki en yakın
+25 tarihsel hedef-gömme listelenir ve o anlarda gerçekte gerçekleşen getiri
+dağılımı raporlanır (medyan senaryo, %10–%90 aralık, yükselen oranı).
+Bu bir **senaryo/benkzerlik analizi**dir; doğrudan fiyat kehaneti değildir.
+
+**Piyasa geneli senaryo taraması** (`uygula --tum --senaryo-tarama`): yukarıdaki
+k-NN senaryo analizini TÜM hisseler için tek seferde çalıştırır. Maliyet hilesi:
+k-NN referans havuzu hisse başına yeniden kurulmaz, BİR KEZ kurulup tüm
+hisselerle paylaşılır — 666 hisse ~1 hissenin havuz maliyetiyle taranır
+(hisse başına kalan iş: son pencereyi gömüp en yakın komşulara bakmak).
+`--senaryo-ref N` havuz boyutunu hisse başına N örnek'e indirir (default 500;
+küçültmek hızlandırır, komşu havuzu daraltır). Çıktı `senaryo_tarama.csv`:
+`medyan_senaryo_getiri_%` azalan sıralı; `p10_%`/`p90_%` senaryo aralığı,
+`yukselen_orani_%` komşularda yükselen payı. Dürüstlük notu: bu kolonlar
+senaryo keşfi içindir — AL listesindeki gibi bir filtre zinciriyle
+birleşmeden tek başına alım kararı üretmez (modelin yön iddiası zayıftır).
+
+**Probe nedir?** Dondurulmuş gömmelerle 8-bar yön sınıflandırması (lojistik
+regresyon) + **ham öznitelik kontrol deneyi**. Aynı pencerelerden iki girdi
+seti çıkarılıp AYNI probe'la eğitilir: (A) embedding gömmesi, (B) ham
+istatistikler (son 8/16/32 bar getiri, 8/16 bar volatilite, hacim rejimi
+değişimi, 64-bar yol konumu). Çıktı üçlü karşılaştırmadır:
+
+```
+[PROBE] 8-bar yön tahmini (lojistik probe) — kontrol deneyi:
+   embedding gömmesi      : %50.7
+   ham öznitelik baseline : %52.4  (getiri+vol+hacim, aynı probe)
+   şans tabanı            : %53.2
+   embedding ek bilgisi   : YOK — ham baseline 1.7 puan daha iyi ...
+```
+
+Yargı: embedding, ham baseline'ı **+2 puanın üzerinde** geçiyorsa model basit
+trend tekrarının ötesinde bilgi taşıyor demektir (VAR); gerideyse modelin
+ekleme değeri yoktur (YOK); ±2 puan içindeyse SINIRDA. Şans tabanına karşı
+değil, ham baseline'a karşı okumak doğru kontrol yöntemidir.
+
+---
+
+## 7. Demo çıktıları (`demo_ciktilar/`)
+
+Paket, **sentetik veriyle** (6 sahte hisse × 1500 gün, içine bilinçli %10–13'lük
+zıplamalar enjekte edilmiş) çalıştırılmış örnek çıktıları içerir — gerçek
+verinizle üretilen tabloların biçimini görmeniz içindir. Not: sentetik veri
+yalnızca 8,6k eğitim penceresi içerir; modelin öngörü gücü (ve anomali ayrımı)
+gerçek BIST verisinde çok daha yüksek olacaktır. Grafikleri açıp
+biçimlendirmeyi inceleyebilirsiniz: `egitim_eğrileri.png`,
+`surprise_ORN01.png`, `embedding_haritasi.png`.
+
+---
+
+## 8. İpuçları
+
+- **Eğitim süresi:** ~10M parametre model, 100+ hisse × 20+ yıl günlük veri
+  ile GPU'da epoch başına ~1–3 dk. CPU'da önce `--emb 128 --derinlik 3
+  --hisseler` ile küçük başlayın.
+- **`--lam` ayarı:** SIGReg kaybı eğitim grafiğinde hızla ~0'a düşüyorsa ve
+  tahmin MSE sapıyorsa lam'ı düşürün; kayıp dalgalanıyorsa/çökme (tahmin MSE
+  hızla 0'a çöküyor) görülüyorsa lam'ı yükseltin (0.5–1.0).
+- **`--tgt` seçimi:** Anomali tespiti için küçük tgt (1–2 bar) daha keskin
+  sinyal verir; genel "rejim öğrenimi" için 5–8 bar daha dengelidir.
+- **Veri sızıntısı yok:** doğrulama bölmesi her hissenin SON %10'u üzerinden
+  zaman sırasıyla ayrılır; pencere normalizasyonu yalnızca bağlam istatistiği
+  kullanır.
+- Windows konsolunda Türkçe karakter sorunu yaşarsanız
+  `chcp 65001` komutunu çalıştırın.
+
+---
+
+## 9. Geriye dönük test ("ne yapsaydık, ne olurdu?")
+
+`lewm_geriye_donuk.py` — tarayıcının geçmişte ne söyleseydi ve söyledikleri
+gerçekleşmiş miydi sorusunu ölçer:
+
+```powershell
+python lewm_geriye_donuk.py --son-tarih 2026-10-16 --kontrol-tarih 2026-10-23 --top 20
+```
+
+1. Günlük CSV'ler fiziksel olarak SON TARİH'e kadar kırpılır (sonrası modelin
+   erişiminin tamamen dışında — girdi sızıntısı imkânsız)
+2. `uygula --tum` ile AYNI kod yoluyla surprise taraması yapılır
+3. TOP-N listesi |σ| ile üretilir
+4. ORİJİNAL CSV'lerden referans (son tarih) ve kontrol (kontrol tarihi)
+   kapanışları okunur; her hissenin gerçek getirişi hesaplanır
+5. Özet: liste / ±3σ alarm kümesi / piyasa medyan karşılaştırması +
+   |σ| ↔ getiri korelasyonları
+6. Rapor: `geriye_donuk_rapor.csv` (tüm hisseler, `listede_mi` bayrağıyla)
+
+Not: mevcut checkpoint son tarihten sonraki verilerle de eğitilmiş olabilir;
+betik girdi sızıntısını engeller ama ağırlık sızıntısını içerir. Tam temiz
+walk-forward için modelin yalnızca son tarihe kadar eğitilmesi gerekir.
+Ayrıca surprise skoru, hedef pencere (tgt bar) tamamlandığı için son
+skorlanabilir bağlam tarihi son tarihin ~tgt bar öncesidir — bu modelin
+tanımının doğal sonucudur, canlı taramada da böyledir.
+
+---
+
+## 10. Piyasa radarı (çöküş yakalama, gerçek-zamanlı görünüm)
+
+`lewm_piyasa_radari.py` — bireysel sürprizleri **kesitsel** okuyup piyasa
+rejimini verir. Çöküş günlerinde çok sayıda hisse AYNI anda ±3σ üstüne
+çıkar; bu toplu sapma piyasa alarmıdır:
+
+- **Sigma radarı**: |σ|>3 hisse oranı (Gauss beklentisi ~%0.3;
+  >%1 TEDBİR, >%4 ALARM)
+- **Fiyat radarı**: piyasa medyan son-5-bar getiri (anlık;
+  <-%3 TEDBİR, <-%7 ALARM)
 
 ```powershell
 python lewm_piyasa_radari.py --son-bar 60 --cokus-esik -5
 ```
 
-### 📋 AL aday listesi
+**Bildirim gecikmesi (v2'de dürüstçe modellendi):** sigma satırı t, t
+anında kurulan bağlamla İZLEYEN tgt barın gerçekleşen yolu arasındaki
+sapmadır; değeri ancak t+tgt kapanışında bilinir. Bu yüzden tablodaki
+sigma kolonları **tahmin-tarihlidir**; o gün canlıda görülen okuma
+**GZ (gerçek-zamanlı)** kolonlarıdır: `gz_sigma(D) = sigma_tarama(D−tgt)`,
+`gz_fiyat(D) = fiyat(D)`. "Radar çöküşten önce uyarmış" görüntüsü tahmin-
+tarihli kolonlardan okunursa yanıltıcıdır — canlıda olan GZ'dir.
+
+**Yakalama analizi** (GZ görünüm üzerinden, ayrıca
+`piyasa_radari_yakalama.csv`):
+
+- *Çöküş olayları*: piyasa medyan ileri-5-bar getiri ≤ `--cokus-esik`
+  (varsayılan −%5) olan gün koşuları. Her olay için radarın ALARM zamanı:
+  ÖNCEDEN / BAŞLANGICINDA / SÜRERKEN / GEÇ / KAÇIRDI.
+- *ALARM bölümleri*: GZ ALARM'ın kesintisiz döneleri; her bölümün
+  zirvesi ve bölüm+işleme ufku içindeki en kötü ileri getiri ile
+  GERÇEK / YANLIŞ / AÇIK değerlendirmesi.
+
+Tek model geçişiyle TÜM geçmişin radar serisi üretilir (kayan kalibrasyon
+shift(1) yalnız geçmiş sürprizleri kullandığı için girdi sızıntısı yok —
+her gün ayrı tarama gerekmez). Fiyat radarı veri sonuna kadar çalışır;
+sigma radarı doğası gereği son tgt barı göremez. Çıktılar:
+`piyasa_radari.csv` + `piyasa_radari.png`. Model ağırlıkları bugünkü
+checkpoint olduğu için ağırlık sızıntısı notu geçerlidir. Eşikler
+betiğin başındaki sabitlerle ayarlanır.
+
+---
+
+## 11. AL listesi ("gerçekten al" durumdaki hisseler)
+
+`lewm_al_listesi.py` — piyasa radarının karşı ucu: hangi hisseler AL
+durumda? Tanım kanıta dayalıdır ve üç katmandır:
+
+- **K1 — model (risk filtresi):** gz sigma ≤ +1 ve |gz sigma| ≤ 3.
+  Geriye dönük test yüksek pozitif σ kuyruğunun piyasa ALTINDA getiri
+  verdiğini gösterdi (bölüm 9) — modelin bugünkü dürüst katkısı yön
+  iddiası değil, ANOMALİ elemedir. gz kaydırma (`gz(D)=σ(D−tgt)`) ile
+  sızıntısız.
+- **K2..K6 — fiyat/hacim teyitleri:** Close>MA20, MA20>MA50, 20-bar göreli
+  güç > piyasa medyanı, 0 < 5-bar getiri ≤ +%15 (aşırı uzama değil),
+  hacim teyidi (5-bar ort / 60-bar ort ≥ 1×).
+- **Piyasa katmanı:** radarla aynı eşiklerle GZ rejim; ALARM'da uyarı
+  (`--piyasa-onay` ile liste üretimi durdurulabilir).
+
+**SKOR** = geçilen koşul sayısı: 6 → GÜÇLÜ AL, 5 → AL, 4 → İZLE
+(`--esik-skor`, varsayılan 5). Ek filtreler: `--min-fiyat` (kuruşluk
+eleme), `--top`, `--senaryo` (listedekilere k-NN senaryo kolonu — yavaş).
 
 ```powershell
 python lewm_al_listesi.py
@@ -174,162 +342,98 @@ python lewm_al_listesi.py --esik-skor 6 --top 20
 python lewm_al_listesi.py --senaryo --piyasa-onay
 ```
 
-### 🕰️ Geçmiş tarih simülasyonu
+**Tarihsel doğrulama (dürüstlük):** aynı kural geçmiş her günde yalnız o
+gün bilinenlerle uygulanır; listenin ileri-5-bar getirisi piyasa medyanıyla
+kıyaslanır (`al_dogrulama.csv` + ÖZET satırları: medyan fark, liste>piyasa
+gün oranı, GZ-ALARM günlerinde ayrı fark). Kural tarihsel olarak piyasa
+altıysa bunu açıkça gösterir — liste ancak bu tablo destekliyorsa anlamlıdır.
+Çıktılar: `al_listesi.csv`, `al_dogrulama.csv`.
+
+**Geriye dönük (hindsight) mod:** veriyi FİZİKSEL olarak son tarihe kadar
+kırpıp listeyi o günü bilerek üretir, sonra listedekileri ORİJİNAL CSV'lerin
+kontrol-tarihi kapanışlarıyla ölçer (`lewm_geriye_donuk` ile aynı dürüstlük
+deseni; kırpılan geçici veri sonunda silinir, `--sakla` ile kalır):
 
 ```powershell
-python lewm_geriye_donuk.py --son-tarih 2026-10-16 --kontrol-tarih 2026-10-23 --top 20
 python lewm_al_listesi.py --son-tarih 2026-10-16 --kontrol-tarih 2026-10-23
 ```
 
-## ⚙️ Model Parametreleri
+DEĞERLENDİRME bölümünde liste üyelerinin 16.10 → 23.10 gerçek getirileri,
+PİYASA (tüm hisseler) medyanı, kategori bazlı döküm ve "listedekilerin
+piyasayı geçme oranı" verilir; `al_degerlendirme.csv`'ye yazılır. Liste boş
+çıkarsa bu da bir karardır (kural o gün AL dememiş) — piyasa özeti yine de
+gösterilir. Not: girdi sızıntısı yoktur; ağırlık sızıntısı notu geçerlidir.
 
-| Parametre | Varsayılan | Açıklama |
-|---|---:|---|
-| `--periyot` | `gunluk` | `gunluk`, `60dk`, `240dk`, `haftalik`, `aylik` |
-| `--hisseler` | Tümü | Virgülle ayrılmış semboller |
-| `--epoch` | `30` | Toplam hedef epoch |
-| `--batch` | `256` | Batch boyutu |
-| `--ctx` | `64` | Bağlam penceresi (bar) |
-| `--tgt` | `8` | Gelecek hedef pencere (bar) |
-| `--lam` | `0.1` | SIGReg kayıp ağırlığı |
-| `--emb` | `256` | Latent gömme boyutu |
-| `--derinlik` | `6` | Transformer katman sayısı |
-| `--kafa` | `8` | Attention head sayısı |
-| `--patch` | `4` | Patch bar uzunluğu |
-| `--lr` | `3e-4` | Warmup + cosine öğrenme oranı |
-| `--cikti` | `lewm_cikti` | Çıktı klasörü |
+### Kural/model harmanı laboratuvarı — `lewm_harman.py`
 
-`--patch`, `ctx` ve `tgt` değerlerini tam bölmezse ortak bölenlerine göre otomatik küçültülür.
+AL listesinin isabet/fark oranını yükseltmek için kural harmanını SİSTEMATİK
+aramak gereken yer: 10 varyant, aynı 250-bar pencerede, aynı doğrulama kodu
+ile sızıntısız kıyaslanır (TABAN skor 4/5/6; K1 sert gzσ≤0 / sakin |gzσ|≤1;
+7. koşul K7 |gzσ|≤1; hacim ≥1.5×; uzama ≤%10; günlük rel20 ilk 15;
+ALARM-gün filtresi). İlk koşu tüm hisselerde sigma geçişi yapar ve
+`harman_onbellek.pkl.gz` önbelleği yazar; sonraki taramalar
+`--onbellek-kullan` ile model/GPU'suz saniyeler içinde döner:
 
-## 📊 Çıktılar
-
-Çıktılar varsayılan olarak `lewm_cikti/` klasörüne yazılır.
-
-| Dosya | Açıklama |
-|---|---|
-| `lewm_model_eniyi.pt` | En iyi doğrulama kaybına sahip checkpoint |
-| `lewm_model_son.pt` | Son epoch checkpoint |
-| `egitim_eğrileri.png` | Eğitim ve doğrulama kayıpları |
-| `surprise_<HISSE>.csv` | Fiyat, sürpriz ve robust sigma |
-| `surprise_<HISSE>.png` | Fiyat ve anomali grafiği |
-| `tarama_son_gommeler.csv` | Son latent gömmeler |
-| `embedding_tumu.csv` | Tarihsel embedding pencereleri |
-| `embedding_haritasi.png` | PCA 2B latent harita |
-| `embedding_pca.csv` | PC1 / PC2 koordinatları |
-| `tahmin_<HISSE>.csv` | k-NN tarihsel senaryolar |
-| `senaryo_tarama.csv` | Piyasa geneli senaryo sıralaması |
-| `piyasa_radari.csv`, `piyasa_radari.png` | Rejim radarı |
-| `piyasa_radari_yakalama.csv` | Çöküş/alarm eşleşmeleri |
-| `al_listesi.csv` | Güncel aday listesi |
-| `al_dogrulama.csv` | Tarihsel kural değerlendirmesi |
-| `al_degerlendirme.csv` | Hindsight AL değerlendirmesi |
-| `geriye_donuk_rapor.csv` | Geçmiş tarih sürpriz taraması |
-
-### 📐 Sigma nasıl yorumlanır?
-
-`σ`, latent tahmin hatasının kayan medyan/MAD referansına göre standartlaştırılmış sapmasıdır. `|σ| > 3`, **modele göre olağandışı** bir gözlemi işaret eder; tek başına fiyatın yükseleceği veya düşeceği anlamına gelmez.
-
-### 🎯 Senaryo tablosu nasıl yorumlanır?
-
-Modelin tahmin ettiği gelecek gömmesine en yakın tarihsel hedef gömmeleri bulunur. Bunların **geçmişte gerçekleşmiş** getirileri özetlenir: medyan, p10–p90 ve pozitif getiri oranı. Bu değerler olasılık kalibrasyonu yapılmış bir gelecek fiyat tahmini değildir.
-
-## 🧪 Doğrulama ve Araştırma Disiplini
-
-### 🔬 Probe / baseline karşılaştırması
-
-Aynı 8-bar yön sınıflandırması, **(A) öğrenilmiş embedding** ve **(B) ham fiyat/hacim istatistikleri** ile ayrı ayrı eğitilir. Ham baseline; 8/16/32-bar getiri, volatilite, hacim rejimi ve 64-bar yol konumu gibi değişkenler kullanır.
-
-```text
-[PROBE] 8-bar yön tahmini — örnek çıktı
-Embedding           : %50.7
-Ham baseline        : %52.4
-Şans / sınıf tabanı : %53.2
-Sonuç               : Ek bilgi gösterilemedi
+```powershell
+python lewm_harman.py                              # ilk koşu: sigma geçişi + 10 varyant
+python lewm_harman.py --onbellek-kullan            # hızlı yeniden tarama
+python lewm_harman.py --onbellek-kullan --dogrula-bar 500 --dogrula-ufuk 10
+python lewm_harman.py --cikti lewm_cikti_buyuk     # büyük modeli aynı tezgâhta sına
 ```
 
-Örnekteki yüzdeler **temsili çıktıdır**; doğrulanmış canlı performans değildir. Projedeki yorum kuralı: embedding baseline'ı **2 puandan fazla** geçerse `VAR`, ±2 puan içindeyse `SINIRDA`, belirgin gerideyse `YOK`. Bu eşik bir araştırma sezgisidir; istatistiksel anlamlılık kanıtı değildir.
-
-### ⏳ Girdi ve ağırlık sızıntısı
-
-- **Bağlam normalizasyonu** yalnızca bağlam istatistiklerini kullanır.
-- **Zamansal validation** her hissenin son %10'luk bölgesine dayanır.
-- **Hindsight** modu CSV'leri belirtilen son tarihte fiziksel olarak kırpar.
-- **Önemli sınır:** Checkpoint bu tarihten sonraki verilerle eğitildiyse **ağırlık sızıntısı** devam eder. Gerçek bir walk-forward değerlendirmesi için her tarih öncesinde modelin yeniden eğitilmesi gerekir.
-
-### 🕒 Gerçek zamanlı sigma gecikmesi
-
-`t` tarihli bağlamın tahmin hatası, takip eden `tgt` bar gerçekleşmeden bilinemez. Bu nedenle canlı değerlendirmede:
-
-```text
-gz_sigma(D) = sigma_tarama(D − tgt)
-gz_fiyat(D) = fiyat(D)
-```
-
-**Tahmin tarihine yazılan sigma**, aynı tarihte biliniyormuş gibi kullanılmamalıdır. Radarın erken uyarı performansı yalnız **GZ görünümünde** değerlendirilmelidir.
-
-### 📉 Piyasa radarı kuralları
-
-| Bileşen | TEDBİR | ALARM |
-|---|---:|---:|
-| `|σ| > 3` olan hisselerin oranı | `> %1` | `> %4` |
-| Piyasa medyan 5-bar getirisi | `< −%3` | `< −%7` |
-
-Bu eşikler yazılımın başlangıç kurallarıdır; istatistiksel olarak evrensel sınırlar değildir. Çöküş olayları varsayılan olarak ileri-5-bar piyasa medyan getirisi `≤ −%5` olan dönemler üzerinden incelenir.
-
-### 🧾 AL listesi puanlaması
-
-| Koşul | Kural |
-|---|---|
-| K1 — Anomali | `gz_sigma ≤ +1` ve `|gz_sigma| ≤ 3` |
-| K2 — Trend | `Close > MA20` |
-| K3 — Trend devamı | `MA20 > MA50` |
-| K4 — Göreli güç | 20-bar güç > piyasa medyanı |
-| K5 — Momentum | `0 < 5-bar getiri ≤ %15` |
-| K6 — Hacim | `5-bar hacim ort. / 60-bar hacim ort. ≥ 1` |
-
-Geçmiş günlerin aday listesi ileri-5-bar getirileri ile piyasa medyanına karşı sınanır. Listenin piyasa altında kaldığı dönemler de raporlanmalıdır.
-
-## 🗂️ Demo Verileri
-
-`demo_ciktilar/`, **6 sentetik hisse × 1.500 gün** ve bilerek eklenen yaklaşık **%10–13 fiyat sıçramaları** ile üretilen örnek grafik ve raporları içerir. Bunlar çıktı biçimini göstermek içindir; **gerçek BIST verisinde daha yüksek performans elde edileceğini kanıtlamaz.**
-
-## 🛠️ Pratik İpuçları
-
-- **GPU belleği:** `--batch`, `--emb` ve `--derinlik` değerlerini donanımınıza göre azaltın.
-- **SIGReg ağırlığı:** `--lam` değişikliğini tahmin kaybı ve embedding dağılımıyla birlikte değerlendirin.
-- **Hedef ufku:** Küçük `--tgt` kısa vadeli anomaliler, daha büyük `--tgt` daha uzun rejimler için denenebilir.
-- **Windows Türkçe karakterler:** Gerekirse terminalde `chcp 65001` çalıştırın.
-- **Hız / kapsam:** `--senaryo-ref` küçüldükçe k-NN havuzu daralır ve tarama hızlanabilir.
-
-## 🗺️ Yol Haritası
-
-- [ ] Tam walk-forward yeniden eğitim ve değerlendirme
-- [ ] İşlem maliyeti / slippage içeren portföy backtest'i
-- [ ] Rejim bazlı model karşılaştırmaları
-- [ ] Probe için güven aralıkları ve istatistiksel anlamlılık testleri
-- [ ] Canlı veri akışı ve gecikme denetimleri
-- [ ] Daha kapsamlı otomatik test ve CI
-
-## 🤝 Katkıda Bulunma
-
-Hata bildirimleri, yeniden üretilebilir deneyler ve pull request'ler memnuniyetle karşılanır. Büyük değişikliklerden önce bir issue açılması önerilir.
-
-## 📚 Referanslar
-
-1. Maes, L., Le Lidec, Q., Scieur, D., LeCun, Y., Balestriero, R. **LeWorldModel: Stable End-to-End Joint-Embedding Predictive Architecture from Pixels** (2026). [arXiv:2603.19312](https://arxiv.org/abs/2603.19312) · [Resmî kod](https://github.com/lucas-maes/le-wm)
-2. Balestriero, R., LeCun, Y. **LeJEPA: Provable and Scalable Self-Supervised Learning Without the Heuristics** (2025). [arXiv:2511.08544](https://arxiv.org/abs/2511.08544)
-3. Assran, M. ve diğerleri. **I-JEPA / V-JEPA** araştırma ailesi.
-
-## ⚠️ Yasal Uyarı
-
-Bu proje yalnızca **araştırma ve eğitim** amaçlıdır; yatırım tavsiyesi değildir. Geçmiş performans gelecekteki getiriyi garanti etmez. Model, veri, uygulama ve piyasa riskleri kullanıcı tarafından değerlendirilmelidir.
+Çıktı: `harman_karsilastirma.csv` (varyant × n-gün, boyut, medyan fark%,
+pozitif gün%, isabet%, hisse-gün) + fark% sıralı konsol tablosu. Okuma:
+TABAN_skor5 satırı mevcut kuraldır; ondan iyi ve boyut_ort≥5 + hisse_gun≥200
+şartını geçen varyant adaydır. Kazananı farklı `--dogrula-bar` /
+`--dogrula-ufuk` ile yeniden sınayın (çoklu-test riski): pencere değişince
+sınıfta kalan varyantı benimsemeyin. Ağırlık sızıntısı TÜM varyantlarda
+ortaktır — varyantlar arası kıyas adildir.
 
 ---
 
-<div align="center">
+## 12. Çıktı sözlüğü (tabloları okuma rehberi)
 
-**⭐ Projeyi faydalı bulduysanız GitHub'da yıldız verebilirsiniz.**
+**Senaryo taraması** (`lewm_cli.py uygula --tum --senaryo-tarama`):
+Her hissenin son 64 barlık görünümü, geçmiş ~300k pencere içinde latent
+uzayda en benzer **k=25** pencereyle eşlenir. Tablodaki sayılar o 25
+komşunun **sonraki 8 barlık gerçek getiri dağılımıdır**:
 
-Made with 🧠 + 📈 for quantitative BIST research.
+- `medyan` — 25 komşunun ortanca getirişi (modelin ortanca beklentisi)
+- `p10` / `p90` — kötü/iyi senaryo kuyruğu (en kötü/en iyi %10'luk dilim)
+- `yükselen %` — kârlı kapanan komşu oranı
+- Kolay okuma: `medyan>0` + `p10 sığ` + `p90−p10 bandı dar` + `yükselen yüksek`
+  = modelin en net olumlu görüşü. Geniş bant = model "her şey olabilir" diyor.
+- Dürüstlük: benzerlik ≠ gelecek garantisi; k=25 küçük örneklem; keşif aracıdır.
 
-</div>
+**Sürpriz taraması** (`surprise_tarama.csv`):
+- `sigma` — modelin "bu bar beklediğimden farklı" düzeyi (σ biriminde,
+  kayan medyan/MAD'a göre normalize); `|sigma| > 3` = OLAĞANDIŞI
+- `skor` — 0-1 arası normalize olağandışılık
+
+**AL listesi** (`al_listesi.csv`):
+- `skor` — 0-6 (K1-K6 koşulları; 5 = AL, 6 = GÜÇLÜ AL)
+- `gzσ` — model risk filtresi (gerçek-zamanlı, +8 bar gecikmeli sigma;
+  `|gzσ| > 3` = ALARM bandı, liste elenir)
+- `r5%` / `r20%` — son 5/20 bar getiri; `rel%` = r20 − piyasa medyanı
+- `hacim` — 5-bar/60-bar hacim oranı (≥1 = hacim desteği var)
+
+**Doğrulama tablosu** (`al_dogrulama.csv`):
+- `liste%` — listedeki hisselerin ufuk-bar ileri getirisi; `piyasa%` —
+  tüm hisselerin medyanı; `fark%` = liste − piyasa
+- `isabet%` — piyasa medyanını geçen liste hisselerinin oranı
+- `—` — ufuk henüz dolmadı (gelecek gerçekleşmedi); birkaç bar sonra
+  aynı koşu bu satırları otomatik doldurur
+
+---
+
+## 13. Referanslar
+
+1. Maes, L., Le Lidec, Q., Scieur, D., LeCun, Y., Balestriero, R.
+   *LeWorldModel: Stable End-to-End Joint-Embedding Predictive Architecture
+   from Pixels.* arXiv:2603.19312, 2026. Resmî kod: github.com/lucas-maes/le-wm
+2. Balestriero, R., LeCun, Y. *LeJEPA: Provable and Scalable Self-Supervised
+   Learning Without the Heuristics.* arXiv:2511.08544, 2025.
+   (SIGReg + Epps-Pulley istatistiği)
+3. Assran, M. vd. *I-JEPA / V-JEPA* ailesi — JEPA mimarisi bağlamı.
+
+Bu paket eğitim amaçlı bir uygulamadır; yatırım tavsiyesi değildir.

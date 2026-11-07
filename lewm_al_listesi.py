@@ -468,6 +468,11 @@ def ana():
               f"{(liste['kategori'] == 'GÜÇLÜ AL').sum()} GÜÇLÜ AL):")
         print(f"   {'hisse':<12}{'kategori':>10}{'skor':>5}{'kapanış':>9}"
               f"{'gzσ':>7}{'r5%':>7}{'r20%':>7}{'rel%':>7}{'hacim':>7}")
+        print("   okuma: skor 0-6 (5=AL, 6=GÜÇLÜ AL); gzσ = model risk filtresi"
+              " (o gün")
+        print("          bilinen; +8 bar gecikmeli sigma; |gzσ|>3 = ALARM bandı);")
+        print("          r5/r20 = son 5/20 bar getiri; rel = r20 − piyasa medyanı;")
+        print("          hacim = 5-bar/60-bar hacim oranı (≥1 = hacim desteği var)")
         for _, s in liste.iterrows():
             sen = (f"  senaryo {s.get('senaryo_med_%', ''):+.0f}%"
                    f" yüks%{s.get('senaryo_yukselen_%', ''):.0f}"
@@ -492,6 +497,13 @@ def ana():
         gecerli = dtablo.dropna(subset=["fark%"])
         print(f"\n--- DOĞRULAMA (son {len(dtablo)} bar, ufuk {a.dogrula_ufuk} bar;"
               f" kural yalnız o gün bilinenlerle uygulandı) ---")
+        print("   okuma: liste% = listedeki hisselerin ufuk-bar ileri getirisi;"
+              " piyasa% = tüm")
+        print("          hisselerin medyanı; fark% = liste − piyasa; isabet% ="
+              " piyasa medyanını")
+        print("          geçen liste hisselerinin oranı; '—' = ufuk henüz"
+              " dolmadı (gelecek")
+        print("          gerçekleşmedi — ölçüm birkaç bar sonra otomatik gelir)")
         print(f"{'tarih':<12}{'boyut':>6}{'liste%':>9}{'piyasa%':>9}"
               f"{'fark%':>8}{'isabet%':>9}  rejim")
         for t, s in dtablo.tail(20).iterrows():
